@@ -1,96 +1,58 @@
+// src/components/TaskForm.jsx
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
-import { useAuth } from '../contexts/AuthContext.jsx'
 
-const TaskForm = ({ onTaskCreated }) => {
-  const { user } = useAuth()
-  const [form, setForm] = useState({
-    title: '',
-    description: '',
-    priority: 'medium',
-    dueDate: '',
-  })
-  const [message, setMessage] = useState(null)
+const TaskForm = ({ onAdd }) => {
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [priority, setPriority] = useState('Moyenne')
+  const [dueDate, setDueDate] = useState('')
 
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value })
-  }
-
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault()
-    const newTask = {
-      ...form,
-      status: 'todo',
-      user_id: user?.id || null,
-      created_at: new Date().toISOString(),
-    }
-
-    if (user) {
-      const { error } = await supabase.from('tasks').insert([newTask])
-      if (error) {
-        setMessage('❌ Erreur lors de la création.')
-      } else {
-        setMessage('✅ Tâche ajoutée !')
-        setForm({ title: '', description: '', priority: 'medium', dueDate: '' })
-        onTaskCreated() // pour rafraîchir la liste
-      }
-    } else {
-      // mode mock
-      setMessage('✅ Tâche simulée (mode déconnecté)')
-      onTaskCreated({ ...newTask, id: crypto.randomUUID() })
-    }
+    onAdd({ title, description, priority, dueDate })
+    setTitle('')
+    setDescription('')
+    setPriority('Moyenne')
+    setDueDate('')
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card p-4 space-y-4 mb-6">
-      <h3 className="text-lg font-semibold text-neutral-700 dark:text-neutral-200">Ajouter une tâche</h3>
-
+    <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2 mb-6">
       <input
-        name="title"
+        type="text"
         placeholder="Titre"
-        className="input"
-        value={form.title}
-        onChange={handleChange}
+        className="p-2 rounded border dark:border-neutral-600 bg-white dark:bg-neutral-700 text-neutral-800 dark:text-white"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
         required
       />
-
       <textarea
-        name="description"
         placeholder="Description"
-        className="input"
-        value={form.description}
-        onChange={handleChange}
+        className="p-2 rounded border dark:border-neutral-600 bg-white dark:bg-neutral-700 text-neutral-800 dark:text-white"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
       />
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <select
-          name="priority"
-          className="input"
-          value={form.priority}
-          onChange={handleChange}
-        >
-          <option value="low">Faible</option>
-          <option value="medium">Moyenne</option>
-          <option value="high">Haute</option>
-        </select>
-
-        <input
-          name="dueDate"
-          type="date"
-          className="input"
-          value={form.dueDate}
-          onChange={handleChange}
-        />
-      </div>
-
+      <select
+        className="p-2 rounded border dark:border-neutral-600 bg-white dark:bg-neutral-700 text-neutral-800 dark:text-white"
+        value={priority}
+        onChange={(e) => setPriority(e.target.value)}
+      >
+        <option>Haute</option>
+        <option>Moyenne</option>
+        <option>Basse</option>
+      </select>
+      <input
+        type="date"
+        className="p-2 rounded border dark:border-neutral-600 bg-white dark:bg-neutral-700 text-neutral-800 dark:text-white"
+        value={dueDate}
+        onChange={(e) => setDueDate(e.target.value)}
+      />
       <button
         type="submit"
-        className="btn btn-primary"
+        className="md:col-span-2 bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition"
       >
         Créer la tâche
       </button>
-
-      {message && <p className="text-sm mt-2">{message}</p>}
     </form>
   )
 }

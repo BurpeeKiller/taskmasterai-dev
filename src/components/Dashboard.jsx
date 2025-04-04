@@ -1,200 +1,220 @@
-import { useState, useEffect, useCallback } from 'react'
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable'
-import TaskCard from './TaskCard.jsx'
-import TaskForm from './TaskForm.jsx'
-import Navbar from './Navbar.jsx'
-import { supabase } from '../lib/supabase.js'
-import { useAuth } from '../contexts/AuthContext.jsx'
+import { useEffect, useState, useCallback } from 'react'
+import { supabase } from '../lib/supabase'
+import TaskForm from './TaskForm'
+import TaskCard from './TaskCard'
+import { DndContext, closestCenter } from '@dnd-kit/core'
+import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { useAutoAnimate } from '@formkit/auto-animate/react'
+import { Clock, Calendar, Plus, BarChart2 } from 'lucide-react'
+import PomodoroTimer from './PomodoroTimer'
+import WeatherWidget from './WeatherWidget'
 
 const Dashboard = () => {
-  const { user } = useAuth()
-  const [setAllTasks] = useState([])
-  const [columns, setColumns] = useState({
-    todo: { name: 'À faire', items: [] },
-    inProgress: { name: 'En cours', items: [] },
-    done: { name: 'Terminé', items: [] },
-  })
-  const [stats, setStats] = useState({
-    totalTasks: 0,
-    completedTasks: 0,
-    pendingTasks: 0,
-    overdueTasks: 0,
-  })
-  const [isLoading, setIsLoading] = useState(true)
-
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  )
+  const [tasks, setTasks] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [parent] = useAutoAnimate()
+  const [currentDate, setCurrentDate] = useState(new Date())
 
   const fetchTasks = useCallback(async () => {
-    setIsLoading(true)
-    try {
-      if (user) {
-        const { data, error } = await supabase
-          .from('tasks')
-          .select('*')
-          .order('created_at', { ascending: false })
-
-        if (error) throw error
-
-        if (data) {
-          setAllTasks(data)
-
-          const todo = data.filter(t => t.status === 'todo')
-          const inProgress = data.filter(t => t.status === 'inProgress')
-          const done = data.filter(t => t.status === 'done')
-
-          setColumns({
-            todo: { name: 'À faire', items: todo },
-            inProgress: { name: 'En cours', items: inProgress },
-            done: { name: 'Terminé', items: done },
-          })
-
-          const today = new Date()
-          today.setHours(0, 0, 0, 0)
-
-          setStats({
-            totalTasks: data.length,
-            completedTasks: done.length,
-            pendingTasks: todo.length + inProgress.length,
-            overdueTasks: data.filter(t => t.status !== 'done' && t.dueDate && new Date(t.dueDate) < today).length,
-          })
-        }
-      } else {
-        // Mode déconnecté : données mock
-        const mockTasks = [
-          {
-            id: '1',
-            title: 'Créer la maquette',
-            description: 'Wireframes dans Figma',
-            status: 'todo',
-            priority: 'high',
-          },
-          {
-            id: '2',
-            title: 'Déployer la bêta',
-            description: 'Version test sur serveur',
-            status: 'done',
-            priority: 'medium',
-          },
-        ]
-
-        setAllTasks(mockTasks)
-        setColumns({
-          todo: { name: 'À faire', items: mockTasks.filter(t => t.status === 'todo') },
-          inProgress: { name: 'En cours', items: [] },
-          done: { name: 'Terminé', items: mockTasks.filter(t => t.status === 'done') },
-        })
-        setStats({
-          totalTasks: mockTasks.length,
-          completedTasks: 1,
-          pendingTasks: 1,
-          overdueTasks: 0,
-        })
-      }
-    } catch (err) {
-      console.error('Erreur chargement tâches :', err)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [setAllTasks, user])
+    setLoading(true)
+    const { data, error } = await supabase.from('tasks').select('*')
+    if (!error) setTasks(data || [])
+    setLoading(false)
+  }, [])
 
   useEffect(() => {
     fetchTasks()
+    
+    // Mettre à jour la date toutes les minutes
+    const interval = setInterval(() => {
+      setCurrentDate(new Date())
+    }, 60000)
+    
+    return () => clearInterval(interval)
   }, [fetchTasks])
 
-  const handleDragEnd = ({ active, over }) => {
-    if (!over) return
-    const [taskId, sourceColumnId] = active.id.split('-')
-    const [_, targetColumnId] = over.id.split('-')
-
-    if (sourceColumnId === targetColumnId) return
-
-    const sourceItems = [...columns[sourceColumnId].items]
-    const targetItems = [...columns[targetColumnId].items]
-    const taskIndex = sourceItems.findIndex(item => item.id === taskId)
-    if (taskIndex < 0) return
-
-    const [movedTask] = sourceItems.splice(taskIndex, 1)
-    const updatedTask = { ...movedTask, status: targetColumnId }
-    targetItems.push(updatedTask)
-
-    setColumns({
-      ...columns,
-      [sourceColumnId]: { ...columns[sourceColumnId], items: sourceItems },
-      [targetColumnId]: { ...columns[targetColumnId], items: targetItems },
-    })
-
-    if (user) {
-      supabase.from('tasks').update({ status: targetColumnId }).eq('id', taskId)
+  const handleDragEnd = (event) => {
+    const { active, over } = event
+    if (active.id !== over?.id) {
+      const oldIndex = tasks.findIndex(task => task.id === active.id)
+      const newIndex = tasks.findIndex(task => task.id === over?.id)
+      const reordered = arrayMove(tasks, oldIndex, newIndex)
+      setTasks(reordered)
     }
-    setAllTasks(prev => prev.map(task => task.id === taskId ? { ...task, status: targetColumnId } : task))
   }
 
-  return (
-    <div className="container mx-auto px-4 py-6">
-      <Navbar />
-      <TaskForm onTaskCreated={fetchTasks} />
+  // Formatter la date pour l'affichage
+  const formattedDate = new Intl.DateTimeFormat('fr-FR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  }).format(currentDate)
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <div className="card-stats">
-          <h3>Total</h3>
-          <p className="text-2xl font-bold">{stats.totalTasks}</p>
-        </div>
-        <div className="card-stats">
-          <h3>Terminées</h3>
-          <p className="text-2xl font-bold text-success">{stats.completedTasks}</p>
-        </div>
-        <div className="card-stats">
-          <h3>En retard</h3>
-          <p className="text-2xl font-bold text-danger">{stats.overdueTasks}</p>
-        </div>
+  // Récupérer l'heure pour le message d'accueil
+  const hour = currentDate.getHours()
+  let greeting = "Bonjour"
+  if (hour < 5) greeting = "Bonne nuit"
+  else if (hour < 12) greeting = "Bonjour"
+  else if (hour < 18) greeting = "Bon après-midi"
+  else greeting = "Bonsoir"
+
+  return (
+    <>
+      {/* En-tête du Dashboard */}
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold mb-1">{greeting}, giraud</h1>
+        <p className="text-sm text-gray-400 italic">
+          "Simplicity boils down to two steps: Identify the essential. Eliminate the rest." - Leo Babauta
+        </p>
+        <p className="text-xs text-gray-500 mt-1">{formattedDate}</p>
       </div>
 
-      {isLoading ? (
-        <p className="text-center py-12">Chargement...</p>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            {Object.entries(columns).map(([columnId, column]) => (
-              <div key={columnId} className="card-column">
-                <div className="p-4 font-semibold bg-neutral-100 dark:bg-neutral-800 rounded-t-xl border-b dark:border-neutral-700">
-                  {column.name} ({column.items.length})
-                </div>
-                <div className="p-4 space-y-2 min-h-[300px] bg-neutral-50 dark:bg-neutral-800/50 rounded-b-xl">
-                  <SortableContext
-                    items={column.items.map(item => `${item.id}-${columnId}`)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    {column.items.map(task => (
-                      <TaskCard
-                        key={`${task.id}-${columnId}`}
-                        id={`${task.id}-${columnId}`}
-                        task={task}
-                        columnId={columnId}
-                      />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Colonne de gauche */}
+        <div className="space-y-6">
+          {/* Smart Overview */}
+          <div className="bg-[#1e293b] rounded-xl shadow-sm p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-yellow-500">✨</span>
+                <h2 className="font-semibold">Smart Overview</h2>
+              </div>
+              <span className="bg-blue-900/50 text-blue-300 text-xs px-2 py-1 rounded-full">NEW</span>
+            </div>
+            <p className="text-sm text-gray-400 mb-4">
+              Add some items to get started with your Smart Overview.
+            </p>
+            <p className="text-xs text-gray-500">
+              TaskMaster can make a review, thing details...
+            </p>
+          </div>
+
+          {/* Your Productivity */}
+          <div className="bg-[#1e293b] rounded-xl shadow-sm p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-purple-500">📊</span>
+                <h2 className="font-semibold">Your Productivity</h2>
+              </div>
+              <button className="text-gray-400 hover:text-gray-300">
+                <BarChart2 size={16} />
+              </button>
+            </div>
+            <p className="text-sm text-gray-400 mb-4">
+              No items to track yet. Start by creating some tasks, goals, projects, or habits!
+            </p>
+          </div>
+
+          {/* Upcoming Deadlines */}
+          <div className="bg-[#1e293b] rounded-xl shadow-sm p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-red-500">📅</span>
+                <h2 className="font-semibold">Upcoming Deadlines</h2>
+              </div>
+            </div>
+            <p className="text-sm text-gray-400 mb-4">
+              No upcoming deadlines.
+            </p>
+          </div>
+
+          {/* Task List */}
+          <div className="bg-[#1e293b] rounded-xl shadow-sm p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <h2 className="font-semibold">Tasks</h2>
+              </div>
+              <div className="flex gap-2">
+                <button className="bg-[#334155] hover:bg-[#475569] text-xs px-2 py-1 rounded-md">
+                  All Tasks
+                </button>
+                <button className="bg-[#334155] hover:bg-[#475569] text-xs px-2 py-1 rounded-md">
+                  Projects
+                </button>
+                <button className="bg-[#334155] hover:bg-[#475569] text-xs px-2 py-1 rounded-md">
+                  Filters
+                </button>
+              </div>
+            </div>
+            
+            {/* Task Input */}
+            <div className="mb-4">
+              <div className="relative flex items-center">
+                <input 
+                  type="text" 
+                  placeholder="Enter new task..." 
+                  className="w-full bg-[#334155] border-none rounded-lg py-2 px-4 pr-10 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                />
+                <button className="absolute right-2 text-gray-400 hover:text-indigo-400">
+                  <Plus size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Task List */}
+            <div ref={parent} className="mt-4 space-y-3">
+              {loading ? (
+                <p className="text-center text-sm text-gray-500">Chargement des tâches...</p>
+              ) : tasks.length > 0 ? (
+                <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={tasks.map(task => task.id)} strategy={verticalListSortingStrategy}>
+                    {tasks.map(task => (
+                      <TaskCard key={task.id} task={task} onDelete={fetchTasks} />
                     ))}
                   </SortableContext>
-                </div>
-              </div>
-            ))}
-          </DndContext>
+                </DndContext>
+              ) : (
+                <p className="text-center text-sm text-gray-500">No tasks yet...</p>
+              )}
+            </div>
+          </div>
         </div>
-      )}
-    </div>
+
+        {/* Colonne de droite */}
+        <div className="space-y-6">
+          {/* Weather & Forecast */}
+          <div className="bg-[#1e293b] rounded-xl shadow-sm p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-blue-500">🌤️</span>
+                <h2 className="font-semibold">Weather & Forecast</h2>
+              </div>
+            </div>
+            <WeatherWidget />
+          </div>
+
+          {/* Pomodoro Timer */}
+          <div className="bg-[#1e293b] rounded-xl shadow-sm p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-red-500">⏱️</span>
+                <h2 className="font-semibold">Pomodoro Timer</h2>
+              </div>
+              <button className="bg-purple-900/50 text-purple-300 text-xs px-2 py-1 rounded-full">
+                New Timer
+              </button>
+            </div>
+            <div className="flex flex-col items-center justify-center py-4">
+              <PomodoroTimer />
+            </div>
+          </div>
+
+          {/* Custom Timers */}
+          <div className="bg-[#1e293b] rounded-xl shadow-sm p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-indigo-500">⏰</span>
+                <h2 className="font-semibold">Custom Timers</h2>
+              </div>
+            </div>
+            <p className="text-sm text-gray-400 mb-4">
+              No custom timers yet...
+            </p>
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
 
